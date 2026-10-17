@@ -1,0 +1,148 @@
+rules_version = '2';
+
+// ============================================================
+//  EduLMS - Quy tắc bảo mật Firestore
+//  - Phải đăng nhập mới đọc được dữ liệu.
+//  - Thành viên chỉ ghi được hồ sơ + dữ liệu thi đua của CHÍNH MÌNH.
+//  - Danh mục (công ty, khu vực, ban ngành) và việc sửa/xóa thành viên khác: chỉ ADMIN.
+//  - Quản trị viên khởi tạo: email trong hàm isBootstrapAdmin() (phải là email đã xác thực).
+//    Các quản trị viên khác: vào Firebase Console > Firestore > users > [uid],
+//    đổi trường role thành "ADMIN".
+// ============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Mặc định: chặn tất cả
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------- Hàm dùng chung ----------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Email quản trị viên khởi tạo (chỉ có hiệu lực khi email đã được xác thực)
+    function isBootstrapAdmin() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in [
+          'cuongtt.tkao@gmail.com',
+          'hanhchinh.na@gmail.com'
+        ];
+    }
+
+    function userDocPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin()
+        || (isSignedIn() && exists(userDocPath()) && get(userDocPath()).data.role == 'ADMIN');
+    }
+
+    // Mã thành viên của chính người dùng đang đăng nhập
+    function ownMemberId() {
+      return 'm-' + request.auth.uid;
+    }
+
+    // ---------- users/{uid}: hồ sơ tài khoản ----------
+    match /users/{uid} {
+      allow get: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+
+      // Tự tạo hồ sơ của mình: role mặc định MEMBER (ADMIN chỉ cho email quản trị đã xác thực)
+      allow create: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.data.fullName is string
+        && request.resource.data.fullName.size() > 0
+        && request.resource.data.fullName.size() <= 100
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 150
+        && (request.resource.data.role == 'MEMBER'
+            || (request.resource.data.role == 'ADMIN' && isBootstrapAdmin()))
+        && request.resource.data.memberId == ownMemberId();
+
+      // Tự sửa hồ sơ: không được đổi role / memberId / email
+      allow update: if isSignedIn()
+        && request.resource.data.fullName is string
+        && request.resource.data.fullName.size() > 0
+        && request.resource.data.fullName.size() <= 100
+        && (
+          isAdmin()
+          || (
+            request.auth.uid == uid
+            && request.resource.data.memberId == resource.data.memberId
+            && request.resource.data.email == resource.data.email
+            && (request.resource.data.role == resource.data.role
+                || (request.resource.data.role == 'ADMIN' && isBootstrapAdmin()))
+          )
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    // ---------- Danh mục: công ty, khu vực, ban ngành ----------
+    match /companies/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /areas/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /departments/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---------- members/{id}: thành viên thi đua ----------
+    // Muốn mở công khai bảng xếp hạng cho người chưa đăng nhập: đổi
+    // "allow read: if isSignedIn();" thành "allow read: if true;"
+    // (lưu ý: danh sách tên "đối tượng" của từng thành viên sẽ hiển thị công khai).
+    match /members/{id} {
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && (isAdmin() || id == ownMemberId())
+        && request.resource.data.fullName is string
+        && request.resource.data.fullName.size() > 0
+        && request.resource.data.fullName.size() <= 100;
+
+      allow update: if isSignedIn()
+        && (isAdmin() || id == ownMemberId())
+        && request.resource.data.fullName is string
+        && request.resource.data.fullName.size() > 0
+        && request.resource.data.fullName.size() <= 100;
+
+      allow delete: if isAdmin();
+    }
+
+    // ---------- huongKhi/{id}: bài chia sẻ hương khí ----------
+    match /huongKhi/{id} {
+      allow read: if isSignedIn();
+
+      // Chỉ được đăng bài dưới tên của chính mình (hoặc ADMIN)
+      allow create: if isSignedIn()
+        && (isAdmin() || request.resource.data.authorId == ownMemberId())
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 300
+        && request.resource.data.content is string
+        && request.resource.data.content.size() <= 20000;
+
+      // Tác giả/ADMIN sửa tự do; người khác chỉ được thả cảm xúc & bình luận
+      allow update: if isSignedIn()
+        && (
+          isAdmin()
+          || resource.data.authorId == ownMemberId()
+          || request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['reactions', 'likesCount', 'userReactions', 'comments'])
+        );
+
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.authorId == ownMemberId());
+    }
+  }
+}
