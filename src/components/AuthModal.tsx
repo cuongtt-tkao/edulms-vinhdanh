@@ -17,39 +17,49 @@ import {
   ExternalLink,
   Loader2,
 } from 'lucide-react';
-import { Company, Area, Department } from '../types/edulms';
-import { signInWithGoogle, signInWithEmail, sendResetPasswordEmail, describeAuthError } from '../firebase';
-
-export interface RegistrationData {
-  fullName: string;
-  username: string;
-  email: string;
-  password: string;
-  companyCode: string;
-  areaCode: string;
-  departmentCode: string;
-}
+import { UserAccount, Company, Area, Department } from '../types/edulms';
+import { signInWithGoogle } from '../firebase';
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
+  accounts: UserAccount[];
   companies: Company[];
   areas: Area[];
   departments: Department[];
-  onRegister: (data: RegistrationData) => Promise<void>;
+  onLogin: (account: UserAccount) => void;
+  onGoogleSuccess: (user: {
+    uid: string;
+    email: string | null;
+    displayName: string | null;
+    photoURL: string | null;
+    emailVerified: boolean;
+  }) => void;
+  onRegister: (data: {
+    fullName: string;
+    username: string;
+    email: string;
+    password?: string;
+    companyCode: string;
+    areaCode: string;
+    departmentCode: string;
+    emailVerified?: boolean;
+  }) => void;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
+  accounts,
   companies,
   areas,
   departments,
+  onLogin,
+  onGoogleSuccess,
   onRegister,
 }) => {
-  const [mode, setMode] = useState<'LOGIN' | 'REGISTER' | 'FORGOT_PASS'>('LOGIN');
+  const [mode, setMode] = useState<'LOGIN' | 'REGISTER' | 'EMAIL_PREVIEW' | 'FORGOT_PASS'>('LOGIN');
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [authError, setAuthError] = useState('');
 
   // Login form state
@@ -60,10 +70,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [regFullName, setRegFullName] = useState('');
   const [regUsername, setRegUsername] = useState('');
   const [regEmail, setRegEmail] = useState('');
-  const [regPassword, setRegPassword] = useState('');
+  const [regPassword, setRegPassword] = useState('123456');
+  const [sendToGmail, setSendToGmail] = useState(true);
   const [regCompany, setRegCompany] = useState(companies[0]?.code || 'Th1');
   const [regArea, setRegArea] = useState('1.1');
   const [regDept, setRegDept] = useState(departments[0]?.code || 'Thanh Niên Nam');
+
+  // Sent Email Simulation State
+  const [dispatchedEmailData, setDispatchedEmailData] = useState<{
+    toEmail: string;
+    fullName: string;
+    username: string;
+    password: string;
+    otpCode: string;
+  } | null>(null);
 
   // Forgot password form
   const [forgotEmail, setForgotEmail] = useState('');
@@ -71,48 +91,50 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Đăng nhập Google (Firebase Auth). Hồ sơ được App tạo/đọc tự động sau khi đăng nhập.
+  // Handle Google Sign-in with Firebase
   const handleGoogleSignInClick = async () => {
     try {
       setIsGoogleLoading(true);
       setAuthError('');
-      await signInWithGoogle();
+      const user = await signInWithGoogle();
+      onGoogleSuccess({
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName,
+        photoURL: user.photoURL,
+        emailVerified: user.emailVerified,
+      });
       onClose();
     } catch (err: any) {
       console.error('Google Sign-in error:', err);
-      setAuthError(describeAuthError(err));
+      if (err.code === 'auth/popup-closed-by-user') {
+        setAuthError('Cửa sổ đăng nhập đã được đóng trước khi hoàn tất.');
+      } else {
+        setAuthError(err.message || 'Không thể đăng nhập bằng Google. Vui lòng thử lại.');
+      }
     } finally {
       setIsGoogleLoading(false);
     }
   };
 
-  const handleLoginSubmit = async (e: React.FormEvent) => {
+  const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
 
-    const email = loginIdentifier.trim();
-    if (!email.includes('@')) {
-      setAuthError('Vui lòng nhập địa chỉ email (hoặc dùng nút đăng nhập bằng Google).');
-      return;
-    }
-    if (!loginPassword) {
-      setAuthError('Vui lòng nhập mật khẩu.');
-      return;
-    }
+    const query = loginIdentifier.trim().toLowerCase();
+    const found = accounts.find(
+      (a) => a.username.toLowerCase() === query || a.email.toLowerCase() === query
+    );
 
-    try {
-      setIsSubmitting(true);
-      await signInWithEmail(email, loginPassword);
-      setLoginPassword('');
+    if (found) {
+      onLogin(found);
       onClose();
-    } catch (err: any) {
-      setAuthError(describeAuthError(err));
-    } finally {
-      setIsSubmitting(false);
+    } else {
+      setAuthError('Không tìm thấy tài khoản với tên đăng nhập hoặc email này.');
     }
   };
 
-  const handleRegisterSubmit = async (e: React.FormEvent) => {
+  const handleRegisterSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
 
@@ -125,51 +147,85 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
     if (!regEmail.trim()) {
-      setAuthError('Vui lòng nhập địa chỉ email.');
-      return;
-    }
-    if (regPassword.length < 6) {
-      setAuthError('Mật khẩu phải có tối thiểu 6 ký tự.');
+      setAuthError('Vui lòng nhập địa chỉ Gmail để nhận thông tin đăng nhập.');
       return;
     }
 
-    try {
-      setIsSubmitting(true);
-      await onRegister({
+    const usernameQuery = regUsername.trim().toLowerCase();
+    const exists = accounts.some(
+      (a) => a.username.toLowerCase() === usernameQuery
+    );
+    if (exists) {
+      setAuthError('Tên đăng nhập này đã được sử dụng. Vui lòng chọn tên khác.');
+      return;
+    }
+
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const effectivePass = regPassword.trim() || '123456';
+
+    setDispatchedEmailData({
+      toEmail: regEmail.trim(),
+      fullName: regFullName.trim(),
+      username: usernameQuery,
+      password: effectivePass,
+      otpCode,
+    });
+
+    if (sendToGmail) {
+      setMode('EMAIL_PREVIEW');
+    } else {
+      onRegister({
         fullName: regFullName.trim(),
-        username: regUsername.trim().toLowerCase(),
+        username: usernameQuery,
         email: regEmail.trim(),
-        password: regPassword,
+        password: effectivePass,
         companyCode: regCompany,
-        areaCode: regArea.trim(),
+        areaCode: regArea,
         departmentCode: regDept,
+        emailVerified: true,
       });
-      setRegPassword('');
       onClose();
-    } catch (err: any) {
-      setAuthError(describeAuthError(err));
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
-  const handleForgotPassSubmit = async (e: React.FormEvent) => {
+  const handleConfirmEmailAndLogin = () => {
+    if (!dispatchedEmailData) return;
+
+    onRegister({
+      fullName: dispatchedEmailData.fullName,
+      username: dispatchedEmailData.username,
+      email: dispatchedEmailData.toEmail,
+      password: dispatchedEmailData.password,
+      companyCode: regCompany,
+      areaCode: regArea,
+      departmentCode: regDept,
+      emailVerified: true,
+    });
+
+    onClose();
+  };
+
+  const handleQuickLogin = (account: UserAccount) => {
+    onLogin(account);
+    onClose();
+  };
+
+  const handleForgotPassSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const email = forgotEmail.trim();
-    if (!email.includes('@')) {
-      setForgotMessage('Vui lòng nhập địa chỉ email đã đăng ký.');
-      return;
-    }
-    try {
-      setIsSubmitting(true);
-      await sendResetPasswordEmail(email);
-      setForgotMessage(
-        `Nếu ${email} đã đăng ký tài khoản, thư đặt lại mật khẩu sẽ được gửi tới hộp thư (kiểm tra cả mục Spam).`
-      );
-    } catch (err: any) {
-      setForgotMessage(describeAuthError(err));
-    } finally {
-      setIsSubmitting(false);
+    const query = forgotEmail.trim().toLowerCase();
+    const found = accounts.find((a) => a.email.toLowerCase() === query || a.username.toLowerCase() === query);
+
+    if (found) {
+      setDispatchedEmailData({
+        toEmail: found.email,
+        fullName: found.fullName,
+        username: found.username,
+        password: found.password || '123456',
+        otpCode: Math.floor(100000 + Math.random() * 900000).toString(),
+      });
+      setMode('EMAIL_PREVIEW');
+    } else {
+      setForgotMessage('Không tìm thấy tài khoản với địa chỉ email này trong hệ thống.');
     }
   };
 
@@ -185,7 +241,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </button>
 
         {/* Tab switch */}
-        {(
+        {mode !== 'EMAIL_PREVIEW' && (
           <div className="flex border-b border-slate-100 pb-3 mb-5">
             <button
               onClick={() => {
@@ -227,7 +283,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         )}
 
         {/* OFFICIAL FIREBASE GOOGLE SIGN-IN BUTTON (Appears in both Login & Register) */}
-        {mode !== 'FORGOT_PASS' && (
+        {mode !== 'EMAIL_PREVIEW' && mode !== 'FORGOT_PASS' && (
           <div className="mb-5">
             <button
               type="button"
@@ -257,7 +313,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   />
                 </svg>
               )}
-              <span>Đăng nhập với Google</span>
+              <span>Đăng nhập nhanh với Google (Firebase Auth)</span>
             </button>
 
             <div className="flex items-center my-4">
@@ -268,28 +324,93 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
         )}
 
+        {/* VIEW 1: EMAIL DISPATCH NOTIFICATION (SIMULATION MODAL) */}
+        {mode === 'EMAIL_PREVIEW' && dispatchedEmailData && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
+              <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                <Mail className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-sm text-slate-900">
+                  Hộp thư Gmail xác thực tài khoản
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Đã gửi thông tin đến: <strong>{dispatchedEmailData.toEmail}</strong>
+                </p>
+              </div>
+            </div>
+
+            {/* Email Letter Preview */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-3 font-sans">
+              <div className="flex items-center justify-between text-[11px] text-slate-500 pb-2 border-b border-slate-200">
+                <span>Người gửi: <strong>EduLMS &lt;noreply@edulms.vn&gt;</strong></span>
+                <span className="text-emerald-600 font-bold">✓ Đã gửi thành công</span>
+              </div>
+
+              <div>
+                <div className="font-extrabold text-slate-900 text-sm mb-1">
+                  [EduLMS] Xác thực tài khoản thi đua & Thông tin đăng nhập
+                </div>
+                <p className="text-slate-600 leading-relaxed">
+                  Kính chào <strong>{dispatchedEmailData.fullName}</strong>, <br />
+                  Cảm ơn bạn đã tham gia Lễ hội thi đua Truyền Đạo. Dưới đây là thông tin tài khoản của bạn:
+                </p>
+              </div>
+
+              {/* Login Info Card */}
+              <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5 font-mono text-[11px]">
+                <div>• Tên đăng nhập: <strong>{dispatchedEmailData.username}</strong></div>
+                <div>• Mật khẩu đăng nhập: <strong className="text-blue-700">{dispatchedEmailData.password}</strong></div>
+                <div>• Mã OTP kích hoạt: <span className="px-2 py-0.5 bg-amber-100 text-amber-900 font-black rounded">{dispatchedEmailData.otpCode}</span></div>
+              </div>
+
+              <p className="text-[11px] text-slate-500 italic">
+                Tài khoản của bạn đã được kiểm tra và kích hoạt sẵn sàng tham gia ghi nhận thi đua.
+              </p>
+            </div>
+
+            <div className="pt-2 flex flex-col gap-2">
+              <button
+                onClick={handleConfirmEmailAndLogin}
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Xác nhận & Đăng nhập ngay vào hệ thống</span>
+              </button>
+
+              <button
+                onClick={() => setMode('LOGIN')}
+                className="w-full py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Quay lại màn hình đăng nhập
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* VIEW 2: LOGIN FORM */}
         {mode === 'LOGIN' && (
           <div>
             <div className="mb-4">
               <h3 className="text-base font-black text-slate-900">Đăng nhập tài khoản</h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Nhập email và mật khẩu của bạn để tiếp tục.
+                Nhập tên đăng nhập hoặc email của bạn để tiếp tục.
               </p>
             </div>
 
             <form onSubmit={handleLoginSubmit} className="space-y-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Email *
+                  Email hoặc Tên đăng nhập *
                 </label>
                 <div className="relative">
                   <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
-                    type="email"
+                    type="text"
                     value={loginIdentifier}
                     onChange={(e) => setLoginIdentifier(e.target.value)}
-                    placeholder="tenban@gmail.com"
+                    placeholder="nguyenvanan hoặc an.nguyen@edulms.vn"
                     className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition"
                     required
                   />
@@ -324,10 +445,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="w-full py-2.5 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center justify-center gap-2 mt-2 cursor-pointer"
+                className="w-full py-2.5 bg-blue-700 hover:bg-blue-800 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center justify-center gap-2 mt-2 cursor-pointer"
               >
-                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
+                <LogIn className="w-4 h-4" />
                 <span>Đăng nhập</span>
               </button>
             </form>
@@ -346,7 +466,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="mb-4">
               <h3 className="text-base font-black text-slate-900">Đăng ký tài khoản thi đua</h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Tạo tài khoản bằng email. Hệ thống sẽ gửi thư xác thực tới email của bạn.
+                Tạo tài khoản cá nhân hoặc kết nối với hòm thư Gmail của bạn.
               </p>
             </div>
 
@@ -397,8 +517,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {/* Gmail Address */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
-                  <span>Địa chỉ email *</span>
-                  <span className="text-[10px] text-emerald-600 font-semibold">Có thư xác thực</span>
+                  <span>Địa chỉ Gmail nhận thông tin *</span>
+                  <span className="text-[10px] text-emerald-600 font-semibold">Gửi Pass về Gmail</span>
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -412,6 +532,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   />
                 </div>
               </div>
+
+              {/* Checkbox option */}
+              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={sendToGmail}
+                  onChange={(e) => setSendToGmail(e.target.checked)}
+                  className="w-4 h-4 rounded text-blue-600 focus:ring-0"
+                />
+                <span>Gửi thông tin tài khoản và mật khẩu về Gmail để xác thực</span>
+              </label>
 
               {/* Units Selection */}
               <div>
@@ -461,11 +592,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center justify-center gap-2 mt-4 cursor-pointer"
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center justify-center gap-2 mt-4 cursor-pointer"
               >
-                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
-                <span>Đăng ký tài khoản</span>
+                <UserPlus className="w-4 h-4" />
+                <span>Đăng ký & Xác thực Gmail</span>
               </button>
             </form>
           </div>
@@ -477,7 +607,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="mb-4">
               <h3 className="text-base font-black text-slate-900">Quên mật khẩu?</h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Nhập email đã đăng ký để nhận thư đặt lại mật khẩu.
+                Nhập địa chỉ Gmail để nhận lại thông tin đăng nhập và mật khẩu qua thư điện tử.
               </p>
             </div>
 
@@ -490,15 +620,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <form onSubmit={handleForgotPassSubmit} className="space-y-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Địa chỉ email
+                  Địa chỉ Gmail hoặc Tên đăng nhập
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
-                    type="email"
+                    type="text"
                     value={forgotEmail}
                     onChange={(e) => setForgotEmail(e.target.value)}
-                    placeholder="tenban@gmail.com"
+                    placeholder="nguyenvanan hoặc an.nguyen@edulms.vn"
                     className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-hidden"
                     required
                   />
@@ -515,10 +645,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 py-2 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                  className="flex-1 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
                 >
-                  Gửi thư đặt lại mật khẩu
+                  Gửi thư Gmail
                 </button>
               </div>
             </form>

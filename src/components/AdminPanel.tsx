@@ -217,16 +217,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
-                if (window.confirm('Nạp lại danh mục mẫu (công ty, khu vực, ban ngành)? Dữ liệu thành viên và các mục bạn đã thêm sẽ KHÔNG bị xóa.')) {
+                if (window.confirm('Khôi phục toàn bộ dữ liệu mẫu ban đầu của cuộc thi?')) {
                   onResetData();
-                  onShowNotification('Đang nạp danh mục mẫu...');
+                  onShowNotification('Đã khôi phục dữ liệu mặc định.');
                 }
               }}
               className="px-3.5 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition flex items-center gap-1.5"
-              title="Nạp lại danh mục mẫu"
+              title="Khôi phục dữ liệu ban đầu"
             >
               <RotateCcw className="w-4 h-4 text-slate-500" />
-              <span>Nạp danh mục mẫu</span>
+              <span>Khôi phục mẫu</span>
             </button>
           </div>
         </div>

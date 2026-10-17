@@ -1,10 +1,26 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { doc, onSnapshot, updateDoc, writeBatch, getDocFromServer } from 'firebase/firestore';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  useCloudCollection,
-  sortHuongKhiNewestFirst,
-  seedStructure,
-} from './data/cloudStore';
+  loadStoredCompanies,
+  saveStoredCompanies,
+  loadStoredAreas,
+  saveStoredAreas,
+  loadStoredDepartments,
+  saveStoredDepartments,
+  loadStoredMembers,
+  saveStoredMembers,
+  loadStoredAccounts,
+  saveStoredAccounts,
+  loadCurrentAuthUser,
+  saveCurrentAuthUser,
+  loadStoredHuongKhi,
+  saveStoredHuongKhi,
+  INITIAL_COMPANIES,
+  INITIAL_AREAS,
+  INITIAL_DEPARTMENTS,
+  INITIAL_MEMBERS,
+  INITIAL_ACCOUNTS,
+  INITIAL_HUONG_KHI,
+} from './data/competitionStore';
 import {
   Company,
   Area,
@@ -38,62 +54,26 @@ import { RegionalStats } from './components/RegionalStats';
 import { ResultEntrySection } from './components/ResultEntrySection';
 import { AdminPanel } from './components/AdminPanel';
 import { ProfilePage } from './components/ProfilePage';
-import { AuthModal, RegistrationData } from './components/AuthModal';
+import { AuthModal } from './components/AuthModal';
 import { DetailModal } from './components/DetailModal';
 import { RegionalDetailModal } from './components/RegionalDetailModal';
 import { RulesModal } from './components/RulesModal';
 import { NewsSection } from './components/NewsSection';
 import { Footer } from './components/Footer';
 import { Shield, Lock, ArrowRight } from 'lucide-react';
-import {
-  auth,
-  db,
-  onAuthStateChanged,
-  FirebaseUser,
-  logOutFirebase,
-  registerWithEmail,
-  changeCurrentPassword,
-  describeAuthError,
-  BOOTSTRAP_ADMIN_EMAILS,
-} from './firebase';
+import { logOutFirebase } from './firebase';
 
 export default function App() {
-  // ---------- Đăng nhập (Firebase Authentication) ----------
-  const [authReady, setAuthReady] = useState<boolean>(false);
-  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
-  const [profileState, setProfileState] = useState<'UNKNOWN' | 'READY' | 'MISSING'>('UNKNOWN');
-  const pendingRegistrationRef = useRef<RegistrationData | null>(null);
-  const creatingProfileRef = useRef<boolean>(false);
-  const welcomedUidRef = useRef<string | null>(null);
-  const signedIn = !!firebaseUser;
+  // Master Entities State (persisted to localStorage)
+  const [companies, setCompanies] = useState<Company[]>(() => loadStoredCompanies());
+  const [areas, setAreas] = useState<Area[]>(() => loadStoredAreas());
+  const [departments, setDepartments] = useState<Department[]>(() => loadStoredDepartments());
+  const [members, setMembers] = useState<Member[]>(() => loadStoredMembers());
+  const [accounts, setAccounts] = useState<UserAccount[]>(() => loadStoredAccounts());
+  const [huongKhiList, setHuongKhiList] = useState<HuongKhiItem[]>(() => loadStoredHuongKhi());
 
-  // ---------- Dữ liệu dùng chung (Cloud Firestore, cập nhật thời gian thực) ----------
-  const reportError = (msg: string) => showNotification(msg);
-  const [companies, setCompanies, companiesLoaded] = useCloudCollection<Company>('companies', {
-    enabled: signedIn,
-    ordered: true,
-    onError: reportError,
-  });
-  const [areas, setAreas] = useCloudCollection<Area>('areas', {
-    enabled: signedIn,
-    ordered: true,
-    onError: reportError,
-  });
-  const [departments, setDepartments] = useCloudCollection<Department>('departments', {
-    enabled: signedIn,
-    ordered: true,
-    onError: reportError,
-  });
-  const [members, setMembers] = useCloudCollection<Member>('members', {
-    enabled: signedIn,
-    onError: reportError,
-  });
-  const [huongKhiList, setHuongKhiList] = useCloudCollection<HuongKhiItem>('huongKhi', {
-    enabled: signedIn,
-    sort: sortHuongKhiNewestFirst,
-    onError: reportError,
-  });
+  // Current Authentication User
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => loadCurrentAuthUser());
 
   // Main Page View Tabs: 'HONORS' | 'ENTRY' | 'PROFILE' | 'ADMIN'
   const [activeTab, setActiveTab] = useState<'HONORS' | 'ENTRY' | 'PROFILE' | 'ADMIN'>('HONORS');
@@ -135,24 +115,25 @@ export default function App() {
   // Current member data linked to logged-in user
   const currentMemberData = useMemo(() => {
     if (!currentUser) return null;
-    return rankedMembers.find((m) => m.id === currentUser.memberId) || null;
+    return (
+      rankedMembers.find(
+        (m) =>
+          m.id === currentUser.memberId ||
+          m.fullName.toLowerCase() === currentUser.fullName.toLowerCase() ||
+          (m.companyCode === currentUser.companyCode && m.areaCode === currentUser.areaCode)
+      ) || null
+    );
   }, [currentUser, rankedMembers]);
-
-  // Reaction của riêng người đang đăng nhập (dữ liệu dùng chung lưu theo từng tài khoản)
-  const huongKhiView = useMemo<HuongKhiItem[]>(
-    () =>
-      huongKhiList.map((hk) => ({
-        ...hk,
-        userReaction: currentUser ? hk.userReactions?.[currentUser.id] : undefined,
-      })),
-    [huongKhiList, currentUser?.id]
-  );
 
   // Personal Huong Khi list of current user
   const myHuongKhiList = useMemo(() => {
     if (!currentUser) return [];
-    return huongKhiView.filter((h) => h.authorId === currentUser.memberId);
-  }, [huongKhiView, currentUser]);
+    return huongKhiList.filter(
+      (h) =>
+        h.authorId === currentMemberData?.id ||
+        h.authorName.toLowerCase() === currentUser.fullName.toLowerCase()
+    );
+  }, [huongKhiList, currentUser, currentMemberData]);
 
   // Dynamic KPI
   const kpiData = useMemo(() => {
@@ -201,167 +182,164 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isAutoRefreshPaused, handleRefresh]);
 
-  // ---------- Theo dõi trạng thái đăng nhập ----------
+  // Persistence effects
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setFirebaseUser(u);
-      setAuthReady(true);
-      if (!u) {
-        setCurrentUser(null);
-        setProfileState('UNKNOWN');
-        creatingProfileRef.current = false;
-      }
-    });
-    return unsubscribe;
-  }, []);
+    saveStoredCompanies(companies);
+  }, [companies]);
 
-  // Đọc hồ sơ tài khoản (users/{uid}) theo thời gian thực
   useEffect(() => {
-    if (!firebaseUser) return;
-    const unsubscribe = onSnapshot(
-      doc(db, 'users', firebaseUser.uid),
-      (snap) => {
-        if (snap.exists()) {
-          setCurrentUser({ ...(snap.data() as Omit<UserAccount, 'id'>), id: snap.id });
-          setProfileState('READY');
-        } else if (!snap.metadata.fromCache) {
-          // Máy chủ xác nhận chưa có hồ sơ -> sẽ tạo ở effect bên dưới
-          setCurrentUser(null);
-          setProfileState('MISSING');
-        }
-      },
-      (err) => {
-        console.error('[Firestore] Không đọc được hồ sơ:', err);
-        showNotification(`Không đọc được hồ sơ tài khoản: ${err.message}`);
-      }
-    );
-    return unsubscribe;
-  }, [firebaseUser?.uid]);
+    saveStoredAreas(areas);
+  }, [areas]);
 
-  // Tạo hồ sơ + thành viên thi đua cho tài khoản mới (Google hoặc email/mật khẩu)
   useEffect(() => {
-    if (!firebaseUser || profileState !== 'MISSING' || creatingProfileRef.current) return;
-    creatingProfileRef.current = true;
+    saveStoredDepartments(departments);
+  }, [departments]);
 
-    const createProfile = async () => {
-      const userRef = doc(db, 'users', firebaseUser.uid);
-      const existing = await getDocFromServer(userRef);
-      if (existing.exists()) return;
+  useEffect(() => {
+    saveStoredMembers(members);
+  }, [members]);
 
-      const reg = pendingRegistrationRef.current;
-      const email = (firebaseUser.email || reg?.email || '').trim();
-      const fullName =
-        reg?.fullName || firebaseUser.displayName || email.split('@')[0] || 'Thành viên mới';
-      const companyCode = reg?.companyCode || companies[0]?.code || 'Th1';
-      const areaCode =
-        reg?.areaCode ||
-        areas.find((a) => a.companyCode === companyCode)?.code ||
-        areas[0]?.code ||
-        '1.1';
-      const departmentCode = reg?.departmentCode || departments[0]?.code || 'Thanh Niên Nam';
-      const today = new Date().toISOString().split('T')[0];
-      const memberId = `m-${firebaseUser.uid}`;
-      const isAdminEmail =
-        firebaseUser.emailVerified && BOOTSTRAP_ADMIN_EMAILS.includes(email.toLowerCase());
+  useEffect(() => {
+    saveStoredAccounts(accounts);
+  }, [accounts]);
 
-      const account = JSON.parse(
-        JSON.stringify({
-          username: reg?.username || email.split('@')[0] || `user_${Date.now()}`,
-          email,
-          fullName,
-          role: isAdminEmail ? 'ADMIN' : 'MEMBER',
-          memberId,
-          companyCode,
-          areaCode,
-          departmentCode,
-          avatarUrl: firebaseUser.photoURL || undefined,
-          emailVerified: firebaseUser.emailVerified,
-          createdAt: today,
-        })
-      );
+  useEffect(() => {
+    saveCurrentAuthUser(currentUser);
+  }, [currentUser]);
 
-      const member = JSON.parse(
-        JSON.stringify({
-          code: `MEM-${firebaseUser.uid.slice(0, 6).toUpperCase()}`,
-          fullName,
-          companyCode,
-          areaCode,
-          departmentCode,
-          active: true,
-          score: 0,
-          avatarUrl: firebaseUser.photoURL || undefined,
-          goals: { s1: 10, s2: 8, s3: 5, s4: 4, s5: 4, s6: 2 },
-          results: { s1: 0, s2: 0, s3: 0, s4: 0, s5: 0, s6: 0 },
-          targets: [],
-          createdAt: today,
-        })
-      );
+  useEffect(() => {
+    saveStoredHuongKhi(huongKhiList);
+  }, [huongKhiList]);
 
-      const batch = writeBatch(db);
-      batch.set(userRef, account);
-      batch.set(doc(db, 'members', memberId), member);
-      await batch.commit();
+  // Authentication Handlers
+  const handleLogin = (account: UserAccount) => {
+    setCurrentUser(account);
+    showNotification(`Xin chào, ${account.fullName}! Đăng nhập thành công.`);
+  };
 
-      pendingRegistrationRef.current = null;
-      if (reg) {
-        setActiveTab('PROFILE');
-        showNotification(
-          'Đăng ký thành công! Thư xác thực đã được gửi tới email của bạn (kiểm tra cả mục Spam).'
-        );
-      }
+  const handleRegister = (data: {
+    fullName: string;
+    username: string;
+    email: string;
+    password?: string;
+    companyCode: string;
+    areaCode: string;
+    departmentCode: string;
+    emailVerified?: boolean;
+  }) => {
+    // 1. Create corresponding member
+    const newMemberId = `m-${Date.now()}`;
+    const newMember: Member = {
+      id: newMemberId,
+      code: `MEM-${(members.length + 1).toString().padStart(3, '0')}`,
+      fullName: data.fullName,
+      companyCode: data.companyCode,
+      areaCode: data.areaCode,
+      departmentCode: data.departmentCode,
+      active: true,
+      score: 0,
+      goals: { s1: 10, s2: 8, s3: 5, s4: 4, s5: 4, s6: 2 },
+      results: { s1: 0, s2: 0, s3: 0, s4: 0, s5: 0, s6: 0 },
+      targets: [],
+      createdAt: new Date().toISOString().split('T')[0],
     };
 
-    createProfile().catch((err) => {
-      console.error('[Firestore] Không tạo được hồ sơ:', err);
-      showNotification(`Không tạo được hồ sơ tài khoản: ${err.message}`);
-      creatingProfileRef.current = false;
-    });
-  }, [firebaseUser, profileState]);
+    setMembers((prev) => [newMember, ...prev]);
 
-  // Lời chào khi đăng nhập
-  useEffect(() => {
-    if (currentUser && welcomedUidRef.current !== currentUser.id) {
-      welcomedUidRef.current = currentUser.id;
-      showNotification(`Xin chào, ${currentUser.fullName}!`);
-    }
-    if (!currentUser) welcomedUidRef.current = null;
-  }, [currentUser?.id]);
+    // 2. Create account
+    const newAccount: UserAccount = {
+      id: `user-${Date.now()}`,
+      username: data.username,
+      email: data.email,
+      password: data.password || '123456',
+      fullName: data.fullName,
+      role: 'MEMBER',
+      memberId: newMemberId,
+      companyCode: data.companyCode,
+      areaCode: data.areaCode,
+      departmentCode: data.departmentCode,
+      emailVerified: data.emailVerified ?? true,
+      createdAt: new Date().toISOString().split('T')[0],
+    };
 
-  // Đồng bộ: cấp quyền ADMIN cho email quản trị khởi tạo; cập nhật trạng thái xác thực email
-  useEffect(() => {
-    if (!currentUser || !firebaseUser || currentUser.id !== firebaseUser.uid) return;
-    const patch: Record<string, unknown> = {};
-    const isAdminEmail =
-      firebaseUser.emailVerified &&
-      BOOTSTRAP_ADMIN_EMAILS.includes((firebaseUser.email || '').toLowerCase());
-    if (isAdminEmail && currentUser.role !== 'ADMIN') patch.role = 'ADMIN';
-    if (firebaseUser.emailVerified && !currentUser.emailVerified) patch.emailVerified = true;
-    if (Object.keys(patch).length > 0) {
-      updateDoc(doc(db, 'users', currentUser.id), patch).catch((err) =>
-        console.warn('Không cập nhật được hồ sơ:', err)
-      );
-    }
-  }, [currentUser?.role, currentUser?.emailVerified, firebaseUser?.emailVerified]);
+    setAccounts((prev) => [...prev, newAccount]);
+    setCurrentUser(newAccount);
+    setActiveTab('PROFILE');
+    showNotification(`Đăng ký tài khoản thành công! Thông tin đăng nhập đã được lưu và gửi xác thực.`);
+  };
 
-  // ---------- Đăng ký / Đăng xuất ----------
-  // Đăng ký bằng email + mật khẩu. Hồ sơ được tạo ở effect phía trên ngay khi tài khoản Firebase xuất hiện.
-  const handleRegister = async (data: RegistrationData): Promise<void> => {
-    pendingRegistrationRef.current = data;
-    try {
-      await registerWithEmail(data.email, data.password);
-    } catch (err) {
-      pendingRegistrationRef.current = null;
-      throw err;
+  const handleGoogleAuthSuccess = (googleUser: {
+    uid: string;
+    email: string | null;
+    displayName: string | null;
+    photoURL: string | null;
+    emailVerified: boolean;
+  }) => {
+    const email = googleUser.email || '';
+    const fullName = googleUser.displayName || email.split('@')[0] || 'Thành viên mới';
+    const avatarUrl = googleUser.photoURL || undefined;
+
+    const existing = accounts.find(
+      (a) => a.email.toLowerCase() === email.toLowerCase()
+    );
+
+    if (existing) {
+      const updated: UserAccount = {
+        ...existing,
+        avatarUrl: avatarUrl || existing.avatarUrl,
+        emailVerified: true,
+      };
+      setCurrentUser(updated);
+      setAccounts((prev) => prev.map((a) => (a.id === existing.id ? updated : a)));
+      showNotification(`Xin chào, ${updated.fullName}! Đăng nhập Google Firebase thành công.`);
+    } else {
+      const newMemberId = `m-${Date.now()}`;
+      const newMember: Member = {
+        id: newMemberId,
+        code: `MEM-${(members.length + 1).toString().padStart(3, '0')}`,
+        fullName,
+        companyCode: 'Th1',
+        areaCode: '1.1',
+        departmentCode: 'Thanh Niên Nam',
+        active: true,
+        score: 0,
+        avatarUrl,
+        goals: { s1: 10, s2: 8, s3: 5, s4: 4, s5: 4, s6: 2 },
+        results: { s1: 0, s2: 0, s3: 0, s4: 0, s5: 0, s6: 0 },
+        targets: [],
+        createdAt: new Date().toISOString().split('T')[0],
+      };
+
+      const newAccount: UserAccount = {
+        id: `user-${Date.now()}`,
+        username: email.split('@')[0] || `user_${Date.now()}`,
+        email,
+        fullName,
+        role: email === 'cuongtt.tkao@gmail.com' ? 'ADMIN' : 'MEMBER',
+        memberId: newMemberId,
+        companyCode: 'Th1',
+        areaCode: '1.1',
+        departmentCode: 'Thanh Niên Nam',
+        avatarUrl,
+        emailVerified: true,
+        createdAt: new Date().toISOString().split('T')[0],
+      };
+
+      setMembers((prev) => [newMember, ...prev]);
+      setAccounts((prev) => [newAccount, ...prev]);
+      setCurrentUser(newAccount);
+      showNotification(`Chào mừng ${fullName}! Tài khoản Gmail đã được xác thực an toàn qua Google Firebase.`);
     }
   };
 
   const handleLogout = () => {
     logOutFirebase().catch((err) => console.warn('Firebase logout notice:', err));
+    setCurrentUser(null);
     showNotification('Đã đăng xuất tài khoản.');
   };
 
-  // Profile update handler (trả về true nếu lưu thành công)
-  const handleUpdateProfile = async (updated: {
+  // Profile update handler
+  const handleUpdateProfile = (updated: {
     fullName: string;
     avatarUrl?: string;
     coverUrl?: string;
@@ -370,73 +348,51 @@ export default function App() {
     companyCode: string;
     areaCode: string;
     departmentCode: string;
-  }): Promise<boolean> => {
-    if (!currentUser) return false;
+  }) => {
+    if (!currentUser) return;
 
-    // Đổi mật khẩu (Firebase Auth)
-    if (updated.newPassword) {
-      try {
-        const result = await changeCurrentPassword(updated.newPassword);
-        if (result === 'NO_PASSWORD_PROVIDER') {
-          showNotification('Tài khoản này đăng nhập bằng Google nên không có mật khẩu riêng để đổi.');
-          return false;
+    const updatedAccount: UserAccount = {
+      ...currentUser,
+      fullName: updated.fullName,
+      avatarUrl: updated.avatarUrl || currentUser.avatarUrl,
+      coverUrl: updated.coverUrl || currentUser.coverUrl,
+      bio: updated.bio !== undefined ? updated.bio : currentUser.bio,
+      companyCode: updated.companyCode,
+      areaCode: updated.areaCode,
+      departmentCode: updated.departmentCode,
+      password: updated.newPassword || currentUser.password,
+    };
+
+    setCurrentUser(updatedAccount);
+    setAccounts((prev) => prev.map((a) => (a.id === updatedAccount.id ? updatedAccount : a)));
+
+    // Sync member record
+    setMembers((prev) =>
+      prev.map((m) => {
+        if (
+          m.id === currentUser.memberId ||
+          m.fullName.toLowerCase() === currentUser.fullName.toLowerCase()
+        ) {
+          return {
+            ...m,
+            fullName: updated.fullName,
+            avatarUrl: updated.avatarUrl || m.avatarUrl,
+            coverUrl: updated.coverUrl || m.coverUrl,
+            bio: updated.bio !== undefined ? updated.bio : m.bio,
+            companyCode: updated.companyCode,
+            areaCode: updated.areaCode,
+            departmentCode: updated.departmentCode,
+          };
         }
-        return true;
-      } catch (err) {
-        showNotification(describeAuthError(err));
-        return false;
-      }
-    }
-
-    const patch = JSON.parse(
-      JSON.stringify({
-        fullName: updated.fullName,
-        avatarUrl: updated.avatarUrl || currentUser.avatarUrl,
-        coverUrl: updated.coverUrl || currentUser.coverUrl,
-        bio: updated.bio !== undefined ? updated.bio : currentUser.bio,
-        companyCode: updated.companyCode,
-        areaCode: updated.areaCode,
-        departmentCode: updated.departmentCode,
+        return m;
       })
     );
-
-    try {
-      await updateDoc(doc(db, 'users', currentUser.id), patch);
-    } catch (err: any) {
-      console.error(err);
-      showNotification(`Không lưu được hồ sơ: ${err.message}`);
-      return false;
-    }
-
-    // Đồng bộ sang hồ sơ thành viên thi đua của chính mình
-    setMembers((prev) =>
-      prev.map((m) =>
-        m.id === currentUser.memberId
-          ? {
-              ...m,
-              fullName: updated.fullName,
-              avatarUrl: updated.avatarUrl || m.avatarUrl,
-              coverUrl: updated.coverUrl || m.coverUrl,
-              bio: updated.bio !== undefined ? updated.bio : m.bio,
-              companyCode: updated.companyCode,
-              areaCode: updated.areaCode,
-              departmentCode: updated.departmentCode,
-            }
-          : m
-      )
-    );
-    return true;
   };
 
   // Huong Khi Handlers: Add, React (Facebook-style), and Comment
   const handleAddHuongKhi = (item: Omit<HuongKhiItem, 'id' | 'likesCount'>) => {
-    if (!currentUser) {
-      showNotification('Vui lòng đăng nhập để đăng bài hương khí.');
-      return;
-    }
     const newItem: HuongKhiItem = {
       ...item,
-      authorId: currentUser.memberId || item.authorId,
       id: `hk-${Date.now()}`,
       likesCount: 1,
       reactions: item.reactions || {
@@ -453,47 +409,47 @@ export default function App() {
   };
 
   const handleReactHuongKhi = (id: string, reaction: ReactionType) => {
-    if (!currentUser) {
-      showNotification('Vui lòng đăng nhập để bày tỏ cảm xúc.');
-      setIsAuthModalOpen(true);
-      return;
-    }
-    const uid = currentUser.id;
-
     setHuongKhiList((prev) =>
       prev.map((hk) => {
         if (hk.id !== id) return hk;
 
-        const reactions: ReactionCounts = {
+        const currentReactions: ReactionCounts = hk.reactions || {
           heart: 0,
           pray: 0,
           praise: 0,
           fire: 0,
           blessing: 0,
           like: 0,
-          ...(hk.reactions || {}),
         };
-        const userReactions: Record<string, ReactionType> = { ...(hk.userReactions || {}) };
-        const prevUserReaction = userReactions[uid];
-        let likesCount = hk.likesCount;
+
+        const prevUserReaction = hk.userReaction;
+        const updatedReactions = { ...currentReactions };
 
         if (prevUserReaction === reaction) {
           // Toggle off reaction
-          reactions[reaction] = Math.max(0, (reactions[reaction] || 1) - 1);
-          delete userReactions[uid];
-          likesCount = Math.max(0, likesCount - 1);
-        } else {
-          // Switching from previous reaction (or first reaction)
-          if (prevUserReaction) {
-            reactions[prevUserReaction] = Math.max(0, (reactions[prevUserReaction] || 1) - 1);
-          } else {
-            likesCount = Math.max(1, likesCount + 1);
-          }
-          reactions[reaction] = (reactions[reaction] || 0) + 1;
-          userReactions[uid] = reaction;
+          updatedReactions[reaction] = Math.max(0, (updatedReactions[reaction] || 1) - 1);
+          return {
+            ...hk,
+            userReaction: undefined,
+            reactions: updatedReactions,
+            likesCount: Math.max(0, hk.likesCount - 1),
+          };
         }
 
-        return { ...hk, reactions, userReactions, likesCount };
+        // Switching from previous reaction
+        if (prevUserReaction) {
+          updatedReactions[prevUserReaction] = Math.max(0, (updatedReactions[prevUserReaction] || 1) - 1);
+        }
+
+        updatedReactions[reaction] = (updatedReactions[reaction] || 0) + 1;
+        const deltaLikes = prevUserReaction ? 0 : 1;
+
+        return {
+          ...hk,
+          userReaction: reaction,
+          reactions: updatedReactions,
+          likesCount: Math.max(1, hk.likesCount + deltaLikes),
+        };
       })
     );
     showNotification('Đã bày tỏ cảm xúc thành công!');
@@ -501,19 +457,14 @@ export default function App() {
 
   const handleAddComment = (huongKhiId: string, content: string) => {
     if (!content.trim()) return;
-    if (!currentUser) {
-      showNotification('Vui lòng đăng nhập để bình luận.');
-      setIsAuthModalOpen(true);
-      return;
-    }
 
     const newComment: HuongKhiComment = {
       id: `c-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      authorId: currentUser.id,
-      authorName: currentUser.fullName,
-      authorAvatar: currentUser.avatarUrl,
-      companyCode: currentUser.companyCode,
-      areaCode: currentUser.areaCode,
+      authorId: currentUser?.id || 'anonymous',
+      authorName: currentUser?.fullName || 'Thành viên Edulms',
+      authorAvatar: currentUser?.avatarUrl,
+      companyCode: currentUser?.companyCode,
+      areaCode: currentUser?.areaCode,
       content: content.trim(),
       createdAt: getCurrentFormattedTime(),
     };
@@ -698,11 +649,16 @@ export default function App() {
     setMembers((prev) => prev.filter((m) => m.id !== id));
   };
 
-  // Nạp danh mục mẫu (công ty / khu vực / ban ngành). Không xóa dữ liệu đang có.
   const handleResetData = () => {
-    seedStructure()
-      .then(() => showNotification('Đã nạp danh mục mẫu (công ty, khu vực, ban ngành).'))
-      .catch((err) => showNotification(`Không nạp được danh mục mẫu: ${err.message}`));
+    setCompanies(INITIAL_COMPANIES);
+    setAreas(INITIAL_AREAS);
+    setDepartments(INITIAL_DEPARTMENTS);
+    setMembers(INITIAL_MEMBERS);
+    setAccounts(INITIAL_ACCOUNTS);
+    setHuongKhiList(INITIAL_HUONG_KHI);
+    setCurrentUser(INITIAL_ACCOUNTS[1]);
+    setSelectedAreaCode(null);
+    setSelectedMember(null);
   };
 
   return (
@@ -729,44 +685,6 @@ export default function App() {
         currentUser={currentUser}
         onLogout={handleLogout}
       />
-
-      {/* Yêu cầu đăng nhập để xem dữ liệu dùng chung */}
-      {authReady && !firebaseUser && (
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full mt-4">
-          <div className="rounded-2xl bg-blue-50 border border-blue-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="text-xs text-blue-900 leading-relaxed">
-              <strong>Vui lòng đăng nhập để xem bảng xếp hạng và nhập kết quả thi đua.</strong>
-              <br />
-              Dữ liệu được lưu chung trên máy chủ, mọi thành viên cùng thấy một bảng xếp hạng.
-            </div>
-            <button
-              onClick={() => setIsAuthModalOpen(true)}
-              className="shrink-0 px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-xl text-xs font-bold transition cursor-pointer"
-            >
-              Đăng nhập / Đăng ký
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Quản trị viên: cơ sở dữ liệu còn trống -> tạo danh mục mẫu */}
-      {currentUser?.role === 'ADMIN' && companiesLoaded && companies.length === 0 && (
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full mt-4">
-          <div className="rounded-2xl bg-amber-50 border border-amber-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="text-xs text-amber-900 leading-relaxed">
-              <strong>Cơ sở dữ liệu chưa có danh mục công ty / khu vực / ban ngành.</strong>
-              <br />
-              Bấm nút bên cạnh để tạo danh mục mẫu, sau đó chỉnh sửa trong trang Quản trị.
-            </div>
-            <button
-              onClick={handleResetData}
-              className="shrink-0 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
-            >
-              Tạo danh mục mẫu
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* TAB 1: VINH DANH (HONORS & DASHBOARD) */}
       {activeTab === 'HONORS' && (
@@ -848,7 +766,7 @@ export default function App() {
 
                 {/* News & Huong Khi Section with Reactions & Comments */}
                 <NewsSection
-                  huongKhiList={huongKhiView}
+                  huongKhiList={huongKhiList}
                   currentUser={currentUser}
                   onReactHuongKhi={handleReactHuongKhi}
                   onAddComment={handleAddComment}
@@ -978,9 +896,12 @@ export default function App() {
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
+        accounts={accounts}
         companies={companies}
         areas={areas}
         departments={departments}
+        onLogin={handleLogin}
+        onGoogleSuccess={handleGoogleAuthSuccess}
         onRegister={handleRegister}
       />
 
