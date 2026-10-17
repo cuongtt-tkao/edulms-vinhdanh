@@ -538,7 +538,7 @@ export function saveStoredHuongKhi(data: import('../types/edulms').HuongKhiItem[
 }
 
 import { collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { Member } from './types/edulms';
+//import { Member } from './types/edulms';
 
 // Hàm 1: Đẩy dữ liệu một thành viên lên Firebase Firestore
 export const saveMemberToCloud = async (member: Member) => {
