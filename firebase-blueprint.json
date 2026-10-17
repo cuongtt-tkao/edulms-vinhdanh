@@ -1,0 +1,30 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile and account information",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string", "maxLength": 100 },
+        "username": { "type": "string", "maxLength": 50 },
+        "email": { "type": "string", "maxLength": 150 },
+        "role": { "type": "string", "enum": ["ADMIN", "MEMBER"] },
+        "companyCode": { "type": "string", "maxLength": 20 },
+        "areaCode": { "type": "string", "maxLength": 20 },
+        "departmentCode": { "type": "string", "maxLength": 50 },
+        "avatarUrl": { "type": "string", "maxLength": 500 },
+        "coverUrl": { "type": "string", "maxLength": 500 },
+        "bio": { "type": "string", "maxLength": 300 },
+        "emailVerified": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["fullName", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Collection of registered user accounts and profiles"
+    }
+  }
+}

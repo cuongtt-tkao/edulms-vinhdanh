@@ -1,0 +1,8 @@
+{
+  "name": "Remix EduLMS — Website Vinh danh Lễ hội Truyền Đạo",
+  "description": "Cổng thông tin vinh danh và bảng xếp hạng trực tiếp Lễ hội thi đua Truyền Đạo EduLMS với KPI, Top 3, xếp hạng khu vực và tự động làm mới.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
