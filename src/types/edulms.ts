@@ -167,7 +167,8 @@ export interface HuongKhiItem {
   date: string;
   likesCount: number;
   reactions?: ReactionCounts;
-  userReaction?: ReactionType;
+  userReaction?: ReactionType; // chỉ dùng để hiển thị (tính từ userReactions của người đang đăng nhập)
+  userReactions?: Record<string, ReactionType>; // uid -> cảm xúc đã chọn (lưu chung trên Firestore)
   comments?: HuongKhiComment[];
   imageUrl?: string;
   isFeatured?: boolean;

@@ -68,7 +68,7 @@ interface ProfilePageProps {
     companyCode: string;
     areaCode: string;
     departmentCode: string;
-  }) => void;
+  }) => void | boolean | Promise<boolean | void>;
   onShowNotification: (msg: string) => void;
 }
 
@@ -139,7 +139,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   // Preset Covers without cross
   const presetCovers = SPOTLIGHT_COVERS.map((c) => c.url);
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setEditError('');
 
@@ -148,7 +148,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       return;
     }
 
-    onUpdateProfile({
+    const saved = await onUpdateProfile({
       fullName: editFullName.trim(),
       avatarUrl: editAvatarUrl.trim(),
       coverUrl: editCoverUrl.trim(),
@@ -157,12 +157,13 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       areaCode: editArea,
       departmentCode: editDepartment,
     });
+    if (saved === false) return;
 
     setIsEditProfileModalOpen(false);
     onShowNotification('Đã cập nhật thông tin cá nhân thành công!');
   };
 
-  const handleChangePassword = (e: React.FormEvent) => {
+  const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setEditError('');
 
@@ -176,13 +177,14 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       return;
     }
 
-    onUpdateProfile({
+    const changed = await onUpdateProfile({
       fullName: currentUser.fullName,
       newPassword,
       companyCode: currentUser.companyCode,
       areaCode: currentUser.areaCode,
       departmentCode: currentUser.departmentCode,
     });
+    if (changed === false) return;
 
     setIsPasswordModalOpen(false);
     setOldPassword('');
