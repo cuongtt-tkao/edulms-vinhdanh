@@ -172,20 +172,20 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="lg:hidden">Hồ sơ</span>
             </button>
 
-            {/* Tab 4: Quản trị (Admin) - Chỉ hiện khi role === 'ADMIN' */}
-            {currentUser?.role === 'ADMIN' && (
+            {/* Tab 4: Quản trị (Admin) - Hiện khi role === 'ADMIN' hoặc 'SUPER_ADMIN' */}
+            {(currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN') && (
               <button
                 onClick={() => setActiveTab('ADMIN')}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 lg:px-3 lg:py-2 rounded-xl transition-all duration-200 cursor-pointer whitespace-nowrap ${
                   activeTab === 'ADMIN'
-                    ? 'text-purple-950 dark:text-purple-200 bg-purple-100/80 dark:bg-purple-950/70 border border-purple-300 dark:border-purple-700 shadow-xs ring-1 ring-purple-400/30 font-black'
-                    : 'text-purple-700 dark:text-purple-300 hover:text-purple-950 dark:hover:text-purple-100 hover:bg-purple-50/70 dark:hover:bg-slate-800 border border-transparent'
+                    ? 'text-purple-950 dark:text-purple-200 bg-purple-100/90 dark:bg-purple-950/80 border border-purple-300 dark:border-purple-600 shadow-xs ring-1 ring-purple-400/30 font-black scale-102'
+                    : 'text-purple-700 dark:text-purple-300 hover:text-purple-950 dark:hover:text-purple-100 hover:bg-purple-50 dark:hover:bg-purple-950/40 border border-transparent hover:scale-102'
                 }`}
               >
                 <div className={`p-1 rounded-lg ${activeTab === 'ADMIN' ? 'bg-purple-200/90 dark:bg-purple-800/80 text-purple-900 dark:text-purple-100' : 'bg-purple-100/80 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300'}`}>
                   <Shield className="w-3.5 h-3.5" />
                 </div>
-                <span>Quản trị</span>
+                <span>{currentUser?.role === 'SUPER_ADMIN' ? 'Quản trị Tổng' : 'Quản trị'}</span>
               </button>
             )}
 
@@ -269,16 +269,26 @@ export const Navbar: React.FC<NavbarProps> = ({
                   className="flex items-center gap-2 pl-1.5 pr-2.5 py-1 rounded-full bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition text-left cursor-pointer"
                 >
                   <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-2xs ${
-                    currentUser.role === 'ADMIN' ? 'bg-purple-600' : 'bg-blue-600'
+                    currentUser.role === 'SUPER_ADMIN'
+                      ? 'bg-gradient-to-br from-amber-500 to-purple-700 ring-1 ring-amber-300'
+                      : currentUser.role === 'ADMIN'
+                      ? 'bg-purple-600'
+                      : 'bg-blue-600'
                   }`}>
-                    {currentUser.role === 'ADMIN' ? <Shield className="w-3.5 h-3.5" /> : <User className="w-3.5 h-3.5" />}
+                    {currentUser.role === 'SUPER_ADMIN' ? (
+                      <span className="text-[12px]">👑</span>
+                    ) : currentUser.role === 'ADMIN' ? (
+                      <Shield className="w-3.5 h-3.5" />
+                    ) : (
+                      <User className="w-3.5 h-3.5" />
+                    )}
                   </div>
                   <div className="hidden sm:block text-xs">
                     <div className="font-bold text-slate-900 dark:text-white leading-tight truncate max-w-[100px] lg:max-w-[130px]">
                       {currentUser.fullName}
                     </div>
                     <div className="text-[10px] text-slate-400 dark:text-slate-400 font-medium leading-none">
-                      {currentUser.role === 'ADMIN' ? 'Quản trị' : `${currentUser.companyCode} • KV ${currentUser.areaCode}`}
+                      {currentUser.role === 'SUPER_ADMIN' ? '👑 Quản trị Tổng' : currentUser.role === 'ADMIN' ? 'Ban Quản trị' : `${currentUser.companyCode} • KV ${currentUser.areaCode}`}
                     </div>
                   </div>
                   <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
@@ -289,8 +299,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <div className="p-2 border-b border-slate-100 dark:border-slate-800">
                       <div className="font-bold text-slate-900 dark:text-white text-xs">{currentUser.fullName}</div>
                       <div className="text-[10px] text-slate-400 font-mono">@{currentUser.username}</div>
-                      <div className="mt-1 text-[10px] font-semibold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/70 px-2 py-0.5 rounded w-fit">
-                        {currentUser.role === 'ADMIN' ? 'Quyền Quản trị viên' : 'Tài khoản Cá nhân'}
+                      <div className="mt-1 text-[10px] font-semibold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/70 px-2 py-0.5 rounded w-fit">
+                        {currentUser.role === 'SUPER_ADMIN' ? '👑 Quản Trị Viên Tổng' : currentUser.role === 'ADMIN' ? '🛡️ Ban Quản Trị Hệ Thống' : 'Tài khoản Cá nhân'}
                       </div>
                     </div>
 
@@ -317,7 +327,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                         <span>Nhập kết quả & mục tiêu</span>
                       </button>
 
-                      {currentUser.role === 'ADMIN' && (
+                      {(currentUser.role === 'ADMIN' || currentUser.role === 'SUPER_ADMIN') && (
                         <button
                           onClick={() => {
                             setActiveTab('ADMIN');
@@ -326,7 +336,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                           className="w-full text-left px-2.5 py-1.5 rounded-lg text-purple-800 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/40 flex items-center gap-2 cursor-pointer"
                         >
                           <Shield className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
-                          <span>Trang Quản trị hệ thống</span>
+                          <span>{currentUser.role === 'SUPER_ADMIN' ? 'Trang Quản trị Tổng' : 'Trang Quản trị hệ thống'}</span>
                         </button>
                       )}
 
@@ -409,7 +419,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <span>Hồ sơ</span>
         </button>
 
-        {currentUser?.role === 'ADMIN' && (
+        {(currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN') && (
           <button
             onClick={() => setActiveTab('ADMIN')}
             className={`flex flex-col items-center py-1 px-2.5 rounded-xl transition cursor-pointer ${
@@ -419,7 +429,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             <Shield className={`w-4 h-4 mb-0.5 ${activeTab === 'ADMIN' ? 'text-purple-600 dark:text-purple-400 scale-110' : 'text-slate-400'}`} />
-            <span>Admin</span>
+            <span>{currentUser?.role === 'SUPER_ADMIN' ? 'QTV Tổng' : 'Admin'}</span>
           </button>
         )}
 

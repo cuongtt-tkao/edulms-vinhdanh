@@ -22,8 +22,9 @@ import {
   FileDown,
   AlertCircle,
   Info,
+  Crown,
 } from 'lucide-react';
-import { Company, Area, Department, Member } from '../types/edulms';
+import { Company, Area, Department, Member, UserAccount, UserRole, RoleAssignment } from '../types/edulms';
 import {
   exportSystemConfigExcel,
   exportMembersAndTargetsExcel,
@@ -32,6 +33,7 @@ import {
   parseConfigExcel,
   parseMembersExcel,
 } from '../utils/excelManager';
+import { RoleManagementTab } from './RoleManagementTab';
 
 interface AdminPanelProps {
   companies: Company[];
@@ -56,6 +58,12 @@ interface AdminPanelProps {
   onBatchUpdateMembers?: (members: Member[], mode?: 'MERGE' | 'REPLACE') => void;
   onResetData: () => void;
   onShowNotification: (msg: string) => void;
+  currentUser?: UserAccount | null;
+  usersList?: UserAccount[];
+  onUpdateUserRole?: (targetUserId: string, newRole: UserRole, targetName: string) => Promise<void>;
+  preAssignedRoles?: RoleAssignment[];
+  onPreAssignRole?: (email: string, role: UserRole, note?: string) => Promise<void>;
+  onDeletePreAssignedRole?: (email: string) => Promise<void>;
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
@@ -81,8 +89,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onBatchUpdateMembers,
   onResetData,
   onShowNotification,
+  currentUser,
+  usersList,
+  onUpdateUserRole,
+  preAssignedRoles,
+  onPreAssignRole,
+  onDeletePreAssignedRole,
 }) => {
-  const [activeTab, setActiveTab] = useState<'COMPANIES' | 'AREAS' | 'DEPARTMENTS' | 'MEMBERS' | 'EXCEL_SYNC'>('COMPANIES');
+  const [activeTab, setActiveTab] = useState<'COMPANIES' | 'AREAS' | 'DEPARTMENTS' | 'MEMBERS' | 'EXCEL_SYNC' | 'ROLES'>('COMPANIES');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // File input refs
@@ -391,6 +405,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           >
             <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
             <span>Nhập / Xuất Excel</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('ROLES')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl transition shrink-0 cursor-pointer ${
+              activeTab === 'ROLES'
+                ? 'bg-purple-900 text-white shadow-xs'
+                : 'text-purple-700 dark:text-purple-300 hover:text-purple-950 hover:bg-purple-50 dark:hover:bg-purple-950/40'
+            }`}
+          >
+            <Crown className="w-4 h-4 text-amber-400" />
+            <span>Phân quyền Quản trị {usersList ? `(${usersList.length})` : ''}</span>
+            {currentUser?.role === 'SUPER_ADMIN' && (
+              <span className="px-1.5 py-0.2 bg-amber-400 text-slate-950 text-[10px] font-black rounded-md">
+                VIP
+              </span>
+            )}
           </button>
         </div>
 
@@ -1595,6 +1626,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* TAB 6: PHÂN QUYỀN QUẢN TRỊ VIÊN TỔNG (ROLES) */}
+        {activeTab === 'ROLES' && (
+          <div className="mt-6">
+            <RoleManagementTab
+              currentUser={currentUser || null}
+              usersList={usersList || []}
+              companies={companies}
+              areas={areas}
+              departments={departments}
+              onUpdateUserRole={onUpdateUserRole || (async () => {})}
+              preAssignedRoles={preAssignedRoles}
+              onPreAssignRole={onPreAssignRole}
+              onDeletePreAssignedRole={onDeletePreAssignedRole}
+              onShowNotification={onShowNotification}
+            />
           </div>
         )}
 

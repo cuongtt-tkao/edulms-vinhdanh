@@ -150,10 +150,12 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               </div>
             </div>
 
-            {/* Main Title: TRUYỀN ĐẠO */}
-            <h1 className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-black tracking-wider uppercase font-cinzel my-1 md:my-2 leading-none">
-              <span className="gold-gradient-title select-none inline-block drop-shadow-lg">
+            {/* Main Title: TRUYỀN ĐẠO with luxurious hover ripple and zoom effect */}
+            <h1 className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-black tracking-wider uppercase font-cinzel my-1 md:my-2 leading-none group cursor-pointer inline-block transition-transform duration-500 ease-out hover:scale-105 active:scale-98">
+              <span className="gold-gradient-title select-none inline-block drop-shadow-[0_4px_16px_rgba(245,158,11,0.4)] transition-all duration-500 group-hover:drop-shadow-[0_8px_32px_rgba(251,191,36,0.9)] group-hover:brightness-110 relative">
                 {festivalName}
+                {/* Subtle golden shimmer ripple underline */}
+                <span className="absolute -bottom-1 left-0 w-0 h-1 bg-gradient-to-r from-amber-400 via-yellow-200 to-amber-500 rounded-full transition-all duration-500 group-hover:w-full opacity-80" />
               </span>
             </h1>
 

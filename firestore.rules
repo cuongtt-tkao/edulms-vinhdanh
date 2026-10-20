@@ -2,44 +2,72 @@ rules_version = '2';
 
 // ============================================================
 //  EduLMS - Quy tắc bảo mật Firestore
-//  - Phải đăng nhập mới đọc được dữ liệu.
-//  - Thành viên chỉ ghi được hồ sơ + dữ liệu thi đua của CHÍNH MÌNH.
-//  - Danh mục (công ty, khu vực, ban ngành) và việc sửa/xóa thành viên khác: chỉ ADMIN.
-//  - Quản trị viên khởi tạo: email trong hàm isBootstrapAdmin() (phải là email đã xác thực).
-//    Các quản trị viên khác: vào Firebase Console > Firestore > users > [uid],
-//    đổi trường role thành "ADMIN".
+//  - Quản trị viên tổng (SUPER_ADMIN): Toàn quyền cấu hình, phân quyền cho quản trị viên khác.
+//  - Ban Quản Trị (ADMIN): Quản lý danh mục, thành viên, duyệt và quản lý thi đua.
+//  - Thành viên (MEMBER): Xem dữ liệu thi đua, ghi nhận và cập nhật đối tượng của mình.
 // ============================================================
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Mặc định: chặn tất cả
+    // Mặc định: chặn tất cả truy cập chưa định nghĩa
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // ---------- Hàm dùng chung ----------
+    // ---------- Các hàm trợ giúp bảo mật ----------
     function isSignedIn() {
       return request.auth != null;
-    }
-
-    // Email quản trị viên khởi tạo (chỉ có hiệu lực khi email đã được xác thực)
-    function isBootstrapAdmin() {
-      return isSignedIn()
-        && request.auth.token.email_verified == true
-        && request.auth.token.email in [
-          'cuongtt.tkao@gmail.com',
-          'hanhchinh.na@gmail.com'
-        ];
     }
 
     function userDocPath() {
       return /databases/$(database)/documents/users/$(request.auth.uid);
     }
 
+    function configRolesPath() {
+      return /databases/$(database)/documents/system_config/roles;
+    }
+
+    // Email Quản trị viên tổng khởi tạo chính thức (khớp regex không phân biệt hoa thường)
+    function isSuperAdminEmail(email) {
+      return email != null && (
+        email == 'cuongtt.tkao@gmail.com' ||
+        email == 'hanhchinh.na@gmail.com' ||
+        email.matches('(?i)(cuongtt\\.tkao@gmail\\.com|hanhchinh\\.na@gmail\\.com)')
+      );
+    }
+
+    // Quản trị viên tổng (SUPER_ADMIN):
+    // 1. Email khởi tạo chính thức
+    // 2. Hoặc tài khoản có role == 'SUPER_ADMIN' trong Firestore
+    // 3. Hoặc email nằm trong mảng superAdmins của system_config/roles
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email != null && isSuperAdminEmail(request.auth.token.email))
+        || (exists(userDocPath()) && get(userDocPath()).data.role == 'SUPER_ADMIN')
+        || (
+          exists(configRolesPath())
+          && request.auth.token.email != null
+          && 'superAdmins' in get(configRolesPath()).data
+          && get(configRolesPath()).data.superAdmins.hasAny([request.auth.token.email])
+        )
+      );
+    }
+
+    // Ban Quản trị (ADMIN & SUPER_ADMIN):
+    // Bao gồm Quản trị viên tổng hoặc thành viên được phân quyền ADMIN
     function isAdmin() {
-      return isBootstrapAdmin()
-        || (isSignedIn() && exists(userDocPath()) && get(userDocPath()).data.role == 'ADMIN');
+      return isSuperAdmin() || (
+        isSignedIn() && (
+          (exists(userDocPath()) && get(userDocPath()).data.role in ['ADMIN', 'SUPER_ADMIN'])
+          || (
+            exists(configRolesPath())
+            && request.auth.token.email != null
+            && 'admins' in get(configRolesPath()).data
+            && get(configRolesPath()).data.admins.hasAny([request.auth.token.email])
+          )
+        )
+      );
     }
 
     // Mã thành viên của chính người dùng đang đăng nhập
@@ -47,100 +75,111 @@ service cloud.firestore {
       return 'm-' + request.auth.uid;
     }
 
-    // ---------- users/{uid}: hồ sơ tài khoản ----------
+    // ---------- Cấu hình phân quyền hệ thống (system_config/roles) ----------
+    match /system_config/{id} {
+      // Đọc để đồng bộ quyền cho người dùng đã đăng nhập
+      allow read: if isSignedIn();
+      // Chỉ Quản trị viên tổng mới có quyền ghi/sửa cấu hình phân quyền
+      allow write: if isSuperAdmin() || (isSignedIn() && isSuperAdminEmail(request.auth.token.email));
+    }
+
+    // ---------- users/{uid}: hồ sơ tài khoản & phân quyền ----------
     match /users/{uid} {
-      allow get: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      // Cho phép đọc thông tin tài khoản công khai nếu đã đăng nhập; Admin được list toàn bộ
+      allow get: if isSignedIn();
       allow list: if isAdmin();
 
-      // Tự tạo hồ sơ của mình: role mặc định MEMBER (ADMIN chỉ cho email quản trị đã xác thực)
+      // Tạo hồ sơ cá nhân khi đăng ký hoặc đăng nhập Google
       allow create: if isSignedIn()
         && request.auth.uid == uid
         && request.resource.data.fullName is string
         && request.resource.data.fullName.size() > 0
         && request.resource.data.fullName.size() <= 100
-        && request.resource.data.email is string
-        && request.resource.data.email.size() <= 150
-        && (request.resource.data.role == 'MEMBER'
-            || (request.resource.data.role == 'ADMIN' && isBootstrapAdmin()))
-        && request.resource.data.memberId == ownMemberId();
-
-      // Tự sửa hồ sơ: không được đổi role / memberId / email
-      allow update: if isSignedIn()
-        && request.resource.data.fullName is string
-        && request.resource.data.fullName.size() > 0
-        && request.resource.data.fullName.size() <= 100
         && (
-          isAdmin()
-          || (
-            request.auth.uid == uid
-            && request.resource.data.memberId == resource.data.memberId
-            && request.resource.data.email == resource.data.email
-            && (request.resource.data.role == resource.data.role
-                || (request.resource.data.role == 'ADMIN' && isBootstrapAdmin()))
-          )
+          (request.resource.data.role == 'MEMBER') ||
+          (request.resource.data.role in ['ADMIN', 'SUPER_ADMIN'] && (isSuperAdmin() || isSuperAdminEmail(request.auth.token.email)))
         );
 
-      allow delete: if isAdmin();
+      // Cập nhật hồ sơ:
+      // - Quản trị viên tổng (SUPER_ADMIN) có toàn quyền phân quyền mọi tài khoản.
+      // - Ban Quản trị sửa được thông tin cơ bản nhưng không được can thiệp SUPER_ADMIN.
+      // - Người dùng tự sửa thông tin của mình (được nâng lên SUPER_ADMIN nếu email là bootstrap email).
+      allow update: if isSignedIn() && (
+        isSuperAdmin()
+        || isSuperAdminEmail(request.auth.token.email)
+        || (isAdmin() && request.resource.data.role != 'SUPER_ADMIN' && resource.data.role != 'SUPER_ADMIN')
+        || (
+          request.auth.uid == uid
+          && (
+            request.resource.data.role == resource.data.role
+            || (request.resource.data.role == 'SUPER_ADMIN' && isSuperAdminEmail(request.auth.token.email))
+          )
+        )
+      );
+
+      allow delete: if isSuperAdmin() || isSuperAdminEmail(request.auth.token.email);
     }
 
-    // ---------- Danh mục: công ty, khu vực, ban ngành ----------
+    // ---------- Danh mục: công ty, khu vực, ban ngành (Đọc công khai để hiển thị) ----------
     match /companies/{id} {
-      allow read: if isSignedIn();
+      allow read: if true;
       allow write: if isAdmin();
     }
 
     match /areas/{id} {
-      allow read: if isSignedIn();
+      allow read: if true;
       allow write: if isAdmin();
     }
 
     match /departments/{id} {
-      allow read: if isSignedIn();
+      allow read: if true;
       allow write: if isAdmin();
     }
 
-    // ---------- members/{id}: thành viên thi đua ----------
-    // Muốn mở công khai bảng xếp hạng cho người chưa đăng nhập: đổi
-    // "allow read: if isSignedIn();" thành "allow read: if true;"
-    // (lưu ý: danh sách tên "đối tượng" của từng thành viên sẽ hiển thị công khai).
+    // ---------- members/{id}: thành viên & điểm số thi đua ----------
+    // Đọc công khai để phục vụ bảng xếp hạng và bục vinh danh
     match /members/{id} {
-      allow read: if isSignedIn();
+      allow read: if true;
 
-      allow create: if isSignedIn()
-        && (isAdmin() || id == ownMemberId())
-        && request.resource.data.fullName is string
-        && request.resource.data.fullName.size() > 0
-        && request.resource.data.fullName.size() <= 100;
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        id == ownMemberId() ||
+        (request.resource.data.id is string && request.resource.data.id == id)
+      );
 
-      allow update: if isSignedIn()
-        && (isAdmin() || id == ownMemberId())
-        && request.resource.data.fullName is string
-        && request.resource.data.fullName.size() > 0
-        && request.resource.data.fullName.size() <= 100;
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        id == ownMemberId() ||
+        (resource.data.id is string && request.resource.data.id == resource.data.id)
+      );
 
       allow delete: if isAdmin();
     }
 
-    // ---------- huongKhi/{id}: bài chia sẻ hương khí ----------
-    match /huongKhi/{id} {
-      allow read: if isSignedIn();
+    // ---------- targets/{id}: nhật ký đối tượng chi tiết ----------
+    match /targets/{id} {
+      allow read: if true;
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.memberId == ownMemberId());
+    }
 
-      // Chỉ được đăng bài dưới tên của chính mình (hoặc ADMIN)
+    // ---------- huongKhi/{id}: bài chia sẻ hương khí & lời chứng ----------
+    match /huongKhi/{id} {
+      allow read: if true;
+
+      // Người dùng đã đăng nhập được đăng bài
       allow create: if isSignedIn()
-        && (isAdmin() || request.resource.data.authorId == ownMemberId())
         && request.resource.data.title is string
         && request.resource.data.title.size() <= 300
-        && request.resource.data.content is string
-        && request.resource.data.content.size() <= 20000;
+        && request.resource.data.content is string;
 
-      // Tác giả/ADMIN sửa tự do; người khác chỉ được thả cảm xúc & bình luận
-      allow update: if isSignedIn()
-        && (
-          isAdmin()
-          || resource.data.authorId == ownMemberId()
-          || request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['reactions', 'likesCount', 'userReactions', 'comments'])
-        );
+      // Tác giả/ADMIN sửa bài; mọi người dùng đã đăng nhập được thả cảm xúc & bình luận
+      allow update: if isSignedIn() && (
+        isAdmin()
+        || resource.data.authorId == ownMemberId()
+        || request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['reactions', 'likesCount', 'userReaction', 'comments', 'userReactions'])
+      );
 
       allow delete: if isAdmin() || (isSignedIn() && resource.data.authorId == ownMemberId());
     }

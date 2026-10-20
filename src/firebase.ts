@@ -20,10 +20,23 @@ import {
 import firebaseConfig from '../firebase-applet-config.json';
 
 /**
- * Email quản trị viên khởi tạo (khớp với hàm isBootstrapAdmin() trong firestore.rules).
- * Khi email này đăng nhập (đã xác thực), tài khoản được cấp quyền ADMIN.
+ * Email Quản trị viên tổng (SUPER_ADMIN) khởi tạo (khớp với firestore.rules).
+ * Khi những email này đăng nhập (Google hoặc email), tài khoản tự động được gán quyền SUPER_ADMIN.
  */
-export const BOOTSTRAP_ADMIN_EMAILS: string[] = ['cuongtt.tkao@gmail.com', 'hanhchinh.na@gmail.com'];
+export const BOOTSTRAP_SUPER_ADMIN_EMAILS: string[] = [
+  'cuongtt.tkao@gmail.com',
+  'hanhchinh.na@gmail.com',
+];
+
+// Tương thích ngược với tên cũ
+export const BOOTSTRAP_ADMIN_EMAILS: string[] = BOOTSTRAP_SUPER_ADMIN_EMAILS;
+
+/** Kiểm tra nhanh email có thuộc danh sách Quản trị viên tổng khởi tạo hay không */
+export function isBootstrapSuperAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const clean = email.trim().toLowerCase();
+  return BOOTSTRAP_SUPER_ADMIN_EMAILS.some((e) => e.toLowerCase() === clean);
+}
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);

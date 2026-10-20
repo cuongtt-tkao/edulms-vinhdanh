@@ -1,5 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { doc, onSnapshot, updateDoc, writeBatch, getDocFromServer } from 'firebase/firestore';
+import {
+  doc,
+  collection,
+  onSnapshot,
+  updateDoc,
+  setDoc,
+  writeBatch,
+  getDocFromServer,
+} from 'firebase/firestore';
 import {
   useCloudCollection,
   sortHuongKhiNewestFirst,
@@ -16,6 +24,9 @@ import {
   MemberGoals,
   MemberResults,
   UserAccount,
+  UserRole,
+  RoleAssignment,
+  SystemRolesConfig,
   HuongKhiItem,
   ReactionType,
   ReactionCounts,
@@ -54,7 +65,9 @@ import {
   registerWithEmail,
   changeCurrentPassword,
   describeAuthError,
+  BOOTSTRAP_SUPER_ADMIN_EMAILS,
   BOOTSTRAP_ADMIN_EMAILS,
+  isBootstrapSuperAdminEmail,
 } from './firebase';
 
 export default function App() {
@@ -94,6 +107,48 @@ export default function App() {
     sort: sortHuongKhiNewestFirst,
     onError: reportError,
   });
+
+  // Quản lý tài khoản người dùng & Danh sách cấp quyền trước cho Quản trị viên tổng
+  const [usersList, setUsersList] = useState<UserAccount[]>([]);
+  const [preAssignedRoles, setPreAssignedRoles] = useState<RoleAssignment[]>([]);
+
+  // Lắng nghe cấu hình phân quyền hệ thống (system_config/roles)
+  useEffect(() => {
+    if (!signedIn) return;
+    const unsubscribe = onSnapshot(
+      doc(db, 'system_config', 'roles'),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as SystemRolesConfig;
+          if (Array.isArray(data.assignments)) {
+            setPreAssignedRoles(data.assignments);
+          }
+        }
+      },
+      (err) => console.warn('[Firestore] Lỗi đọc system_config/roles:', err)
+    );
+    return unsubscribe;
+  }, [signedIn]);
+
+  // Lắng nghe danh sách tất cả tài khoản users cho Admin / Super Admin
+  useEffect(() => {
+    if (!currentUser || (currentUser.role !== 'ADMIN' && currentUser.role !== 'SUPER_ADMIN')) {
+      setUsersList([]);
+      return;
+    }
+    const unsubscribe = onSnapshot(
+      collection(db, 'users'),
+      (snap) => {
+        const list: UserAccount[] = snap.docs.map((d) => ({
+          ...(d.data() as Omit<UserAccount, 'id'>),
+          id: d.id,
+        }));
+        setUsersList(list);
+      },
+      (err) => console.warn('[Firestore] Lỗi đọc danh sách users:', err)
+    );
+    return unsubscribe;
+  }, [currentUser?.role]);
 
   // Theme Dark/Light mode
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -244,7 +299,23 @@ export default function App() {
       doc(db, 'users', firebaseUser.uid),
       (snap) => {
         if (snap.exists()) {
-          setCurrentUser({ ...(snap.data() as Omit<UserAccount, 'id'>), id: snap.id });
+          const raw = snap.data() as Omit<UserAccount, 'id'>;
+          const emailLower = (firebaseUser.email || raw.email || '').toLowerCase().trim();
+          const isSuper =
+            isBootstrapSuperAdminEmail(emailLower) ||
+            preAssignedRoles.some((p) => p.email.toLowerCase() === emailLower && p.role === 'SUPER_ADMIN') ||
+            raw.role === 'SUPER_ADMIN';
+          const isAdmin =
+            isSuper ||
+            raw.role === 'ADMIN' ||
+            preAssignedRoles.some((p) => p.email.toLowerCase() === emailLower && p.role === 'ADMIN');
+          const resolvedRole: UserRole = isSuper ? 'SUPER_ADMIN' : isAdmin ? 'ADMIN' : (raw.role || 'MEMBER');
+
+          setCurrentUser({
+            ...raw,
+            id: snap.id,
+            role: resolvedRole,
+          });
           setProfileState('READY');
         } else if (!snap.metadata.fromCache) {
           // Máy chủ xác nhận chưa có hồ sơ -> sẽ tạo ở effect bên dưới
@@ -258,7 +329,7 @@ export default function App() {
       }
     );
     return unsubscribe;
-  }, [firebaseUser?.uid]);
+  }, [firebaseUser?.uid, preAssignedRoles]);
 
   // Tạo hồ sơ + thành viên thi đua cho tài khoản mới (Google hoặc email/mật khẩu)
   useEffect(() => {
@@ -283,15 +354,26 @@ export default function App() {
       const departmentCode = reg?.departmentCode || departments[0]?.code || 'Thanh Niên Nam';
       const today = new Date().toISOString().split('T')[0];
       const memberId = `m-${firebaseUser.uid}`;
-      const isAdminEmail =
-        firebaseUser.emailVerified && BOOTSTRAP_ADMIN_EMAILS.includes(email.toLowerCase());
+      const emailLower = email.toLowerCase();
+      const isSuperAdminEmail =
+        isBootstrapSuperAdminEmail(emailLower) ||
+        preAssignedRoles.some(
+          (p) => p.email.toLowerCase() === emailLower && p.role === 'SUPER_ADMIN'
+        );
+      const isAdminPreAssigned = preAssignedRoles.some(
+        (p) => p.email.toLowerCase() === emailLower && p.role === 'ADMIN'
+      );
+
+      let initialRole: UserRole = 'MEMBER';
+      if (isSuperAdminEmail) initialRole = 'SUPER_ADMIN';
+      else if (isAdminPreAssigned) initialRole = 'ADMIN';
 
       const account = JSON.parse(
         JSON.stringify({
           username: reg?.username || email.split('@')[0] || `user_${Date.now()}`,
           email,
           fullName,
-          role: isAdminEmail ? 'ADMIN' : 'MEMBER',
+          role: initialRole,
           memberId,
           companyCode,
           areaCode,
@@ -338,7 +420,7 @@ export default function App() {
       showNotification(`Không tạo được hồ sơ tài khoản: ${err.message}`);
       creatingProfileRef.current = false;
     });
-  }, [firebaseUser, profileState]);
+  }, [firebaseUser, profileState, preAssignedRoles]);
 
   // Lời chào khi đăng nhập
   useEffect(() => {
@@ -349,21 +431,178 @@ export default function App() {
     if (!currentUser) welcomedUidRef.current = null;
   }, [currentUser?.id]);
 
-  // Đồng bộ: cấp quyền ADMIN cho email quản trị khởi tạo; cập nhật trạng thái xác thực email
+  // Helper xác định quyền Super Admin & Admin tổng quát và nhất quán
+  const isSuperAdminUser = useMemo(() => {
+    if (!currentUser && !firebaseUser) return false;
+    const emailLower = (firebaseUser?.email || currentUser?.email || '').toLowerCase().trim();
+    if (isBootstrapSuperAdminEmail(emailLower)) return true;
+    if (currentUser?.role === 'SUPER_ADMIN') return true;
+    if (preAssignedRoles.some((p) => p.email.toLowerCase() === emailLower && p.role === 'SUPER_ADMIN')) {
+      return true;
+    }
+    return false;
+  }, [currentUser?.role, currentUser?.email, firebaseUser?.email, preAssignedRoles]);
+
+  const isAdminUser = useMemo(() => {
+    if (isSuperAdminUser) return true;
+    if (!currentUser && !firebaseUser) return false;
+    const emailLower = (firebaseUser?.email || currentUser?.email || '').toLowerCase().trim();
+    if (currentUser?.role === 'ADMIN') return true;
+    if (preAssignedRoles.some((p) => p.email.toLowerCase() === emailLower && p.role === 'ADMIN')) {
+      return true;
+    }
+    return false;
+  }, [isSuperAdminUser, currentUser?.role, currentUser?.email, firebaseUser?.email, preAssignedRoles]);
+
+  const effectiveCurrentUser = useMemo(() => {
+    if (!currentUser) return null;
+    const effectiveRole: UserRole = isSuperAdminUser ? 'SUPER_ADMIN' : isAdminUser ? 'ADMIN' : (currentUser.role || 'MEMBER');
+    return {
+      ...currentUser,
+      role: effectiveRole,
+    };
+  }, [currentUser, isSuperAdminUser, isAdminUser]);
+
+  // Đồng bộ: cấp quyền SUPER_ADMIN / ADMIN cho email quản trị khởi tạo hoặc cấp trước; cập nhật xác thực email
   useEffect(() => {
     if (!currentUser || !firebaseUser || currentUser.id !== firebaseUser.uid) return;
+    const emailLower = (firebaseUser.email || currentUser.email || '').toLowerCase().trim();
+    const shouldBeSuper =
+      isBootstrapSuperAdminEmail(emailLower) ||
+      preAssignedRoles.some((p) => p.email.toLowerCase() === emailLower && p.role === 'SUPER_ADMIN');
+    const shouldBeAdmin =
+      preAssignedRoles.some((p) => p.email.toLowerCase() === emailLower && p.role === 'ADMIN');
+
+    const expectedRole: UserRole = shouldBeSuper ? 'SUPER_ADMIN' : shouldBeAdmin ? 'ADMIN' : currentUser.role;
+
+    if (currentUser.role !== expectedRole) {
+      setCurrentUser((prev) => (prev ? { ...prev, role: expectedRole } : null));
+    }
+
     const patch: Record<string, unknown> = {};
-    const isAdminEmail =
-      firebaseUser.emailVerified &&
-      BOOTSTRAP_ADMIN_EMAILS.includes((firebaseUser.email || '').toLowerCase());
-    if (isAdminEmail && currentUser.role !== 'ADMIN') patch.role = 'ADMIN';
+    if (shouldBeSuper && currentUser.role !== 'SUPER_ADMIN') {
+      patch.role = 'SUPER_ADMIN';
+    } else if (shouldBeAdmin && currentUser.role === 'MEMBER') {
+      patch.role = 'ADMIN';
+    }
+
     if (firebaseUser.emailVerified && !currentUser.emailVerified) patch.emailVerified = true;
     if (Object.keys(patch).length > 0) {
       updateDoc(doc(db, 'users', currentUser.id), patch).catch((err) =>
-        console.warn('Không cập nhật được hồ sơ:', err)
+        console.warn('Lỗi đồng bộ hồ sơ lên Firestore:', err)
       );
     }
-  }, [currentUser?.role, currentUser?.emailVerified, firebaseUser?.emailVerified]);
+  }, [currentUser?.role, currentUser?.emailVerified, firebaseUser?.emailVerified, preAssignedRoles]);
+
+  // Quản lý vai trò người dùng (cho Super Admin)
+  const handleUpdateUserRole = async (
+    targetUserId: string,
+    newRole: UserRole,
+    targetName: string
+  ) => {
+    // Cập nhật ngay trong state local để giao diện phản hồi tức thì
+    setUsersList((prev) =>
+      prev.map((u) => (u.id === targetUserId ? { ...u, role: newRole } : u))
+    );
+    if (currentUser && currentUser.id === targetUserId) {
+      setCurrentUser((prev) => (prev ? { ...prev, role: newRole } : null));
+    }
+
+    try {
+      await updateDoc(doc(db, 'users', targetUserId), { role: newRole });
+      showNotification(`Đã phân quyền ${newRole} cho "${targetName}" thành công!`);
+    } catch (err: any) {
+      console.error('[Firestore] Lỗi phân quyền:', err);
+      showNotification(`Lỗi phân quyền: ${err?.message || 'Không thể cập nhật quyền'}`);
+    }
+  };
+
+  const handlePreAssignRole = async (email: string, role: UserRole, note?: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+    const newAssignment: RoleAssignment = {
+      email: cleanEmail,
+      role,
+      grantedBy: currentUser?.fullName || 'Quản trị viên tổng',
+      grantedAt: new Date().toISOString().split('T')[0],
+      note: note || undefined,
+    };
+
+    const updated = preAssignedRoles.filter((a) => a.email.toLowerCase() !== cleanEmail);
+    updated.push(newAssignment);
+    setPreAssignedRoles(updated);
+
+    // Cập nhật nếu tài khoản đó đã tồn tại trong danh sách
+    const target = usersList.find((u) => (u.email || '').toLowerCase().trim() === cleanEmail);
+    if (target) {
+      setUsersList((prev) =>
+        prev.map((u) => (u.id === target.id ? { ...u, role } : u))
+      );
+      updateDoc(doc(db, 'users', target.id), { role }).catch((e) =>
+        console.warn('Lỗi phân quyền trực tiếp:', e)
+      );
+    }
+
+    const superAdmins = Array.from(
+      new Set([
+        ...BOOTSTRAP_SUPER_ADMIN_EMAILS,
+        ...updated.filter((a) => a.role === 'SUPER_ADMIN').map((a) => a.email.toLowerCase()),
+      ])
+    );
+
+    const admins = Array.from(
+      new Set(updated.filter((a) => a.role === 'ADMIN').map((a) => a.email.toLowerCase()))
+    );
+
+    try {
+      await setDoc(
+        doc(db, 'system_config', 'roles'),
+        {
+          superAdmins,
+          admins,
+          assignments: updated,
+          updatedAt: new Date().toISOString(),
+          updatedBy: currentUser?.fullName || 'Quản trị viên tổng',
+        },
+        { merge: true }
+      );
+    } catch (err: any) {
+      console.warn('Lỗi ghi system_config/roles:', err);
+    }
+  };
+
+  const handleDeletePreAssignedRole = async (email: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+    const updated = preAssignedRoles.filter((a) => a.email.toLowerCase() !== cleanEmail);
+
+    const superAdmins = Array.from(
+      new Set([
+        ...BOOTSTRAP_SUPER_ADMIN_EMAILS,
+        ...updated.filter((a) => a.role === 'SUPER_ADMIN').map((a) => a.email.toLowerCase()),
+      ])
+    );
+
+    const admins = Array.from(
+      new Set(updated.filter((a) => a.role === 'ADMIN').map((a) => a.email.toLowerCase()))
+    );
+
+    try {
+      await setDoc(
+        doc(db, 'system_config', 'roles'),
+        {
+          superAdmins,
+          admins,
+          assignments: updated,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } catch (err: any) {
+      console.warn('Lỗi thu hồi quyền:', err);
+    }
+
+    setPreAssignedRoles(updated);
+    showNotification(`Đã thu hồi cấp quyền trước của ${email}`);
+  };
 
   // ---------- Đăng ký / Đăng xuất ----------
   // Đăng ký bằng email + mật khẩu. Hồ sơ được tạo ở effect phía trên ngay khi tài khoản Firebase xuất hiện.
@@ -852,7 +1091,7 @@ export default function App() {
         onOpenAuthModal={() => setIsAuthModalOpen(true)}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        currentUser={currentUser}
+        currentUser={effectiveCurrentUser}
         onLogout={handleLogout}
         isDarkMode={isDarkMode}
         onToggleDarkMode={toggleDarkMode}
@@ -1033,10 +1272,10 @@ export default function App() {
         </main>
       )}
 
-      {/* TAB 4: TRANG QUẢN TRỊ (ADMIN) - Chỉ cho phép quyền ADMIN */}
+      {/* TAB 4: TRANG QUẢN TRỊ (ADMIN) - Cho phép quyền ADMIN & SUPER_ADMIN */}
       {activeTab === 'ADMIN' && (
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full py-6 flex-1">
-          {currentUser?.role === 'ADMIN' ? (
+          {isAdminUser ? (
             <AdminPanel
               companies={companies}
               areas={areas}
@@ -1060,6 +1299,12 @@ export default function App() {
               onBatchUpdateMembers={handleBatchUpdateMembers}
               onResetData={handleResetData}
               onShowNotification={showNotification}
+              currentUser={effectiveCurrentUser}
+              usersList={usersList}
+              onUpdateUserRole={handleUpdateUserRole}
+              preAssignedRoles={preAssignedRoles}
+              onPreAssignRole={handlePreAssignRole}
+              onDeletePreAssignedRole={handleDeletePreAssignedRole}
             />
           ) : (
             <div className="bg-white rounded-3xl p-8 max-w-lg mx-auto text-center shadow-sm border border-slate-100 my-12">

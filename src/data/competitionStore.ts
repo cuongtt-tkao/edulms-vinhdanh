@@ -291,6 +291,30 @@ export function saveStoredMembers(data: Member[]): void {
 
 export const INITIAL_ACCOUNTS: import('../types/edulms').UserAccount[] = [
   {
+    id: 'user-super-cuong',
+    username: 'cuongtt',
+    email: 'cuongtt.tkao@gmail.com',
+    fullName: 'Quản Trị Viên Tổng (Cường TT)',
+    role: 'SUPER_ADMIN',
+    companyCode: 'Th1',
+    areaCode: '1.1',
+    departmentCode: 'Tráng Niên',
+    emailVerified: true,
+    createdAt: '2026-10-01',
+  },
+  {
+    id: 'user-super-hc',
+    username: 'hanhchinh',
+    email: 'hanhchinh.na@gmail.com',
+    fullName: 'Quản Trị Viên Tổng (Hành Chính)',
+    role: 'SUPER_ADMIN',
+    companyCode: 'Th1',
+    areaCode: '1.1',
+    departmentCode: 'Tráng Niên',
+    emailVerified: true,
+    createdAt: '2026-10-01',
+  },
+  {
     id: 'user-admin',
     username: 'admin',
     email: 'admin@edulms.vn',
@@ -299,6 +323,7 @@ export const INITIAL_ACCOUNTS: import('../types/edulms').UserAccount[] = [
     companyCode: 'Th1',
     areaCode: '1.1',
     departmentCode: 'Tráng Niên',
+    emailVerified: true,
     createdAt: '2026-10-01',
   },
   {

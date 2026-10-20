@@ -111,7 +111,25 @@ export interface Member {
   bio?: string;
 }
 
-export type UserRole = 'ADMIN' | 'MEMBER';
+export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'MEMBER';
+
+export interface RoleAssignment {
+  email: string;
+  role: UserRole;
+  grantedBy: string;
+  grantedAt: string;
+  note?: string;
+}
+
+export interface SystemRolesConfig {
+  superAdmins: string[];
+  admins: string[];
+  assignments?: RoleAssignment[];
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export type ThemeMode = 'light' | 'dark';
 
 export interface UserAccount {
   id: string;
